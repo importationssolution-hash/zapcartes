@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><mask id="m"><rect width="64" height="64" fill="#fff"/><path d="M36 9 L20 35 L30 35 L25 55 L45 26 L34 26 L40 9 Z" fill="#000" transform="rotate(-8 32 32)"/></mask></defs>
-  <circle cx="32" cy="32" r="31" fill="#f6c343"/>
-  <g mask="url(#m)"><rect x="17" y="10" width="30" height="44" rx="5" fill="#1c1b19" transform="rotate(-12 32 32)"/></g>
-  <rect x="21.5" y="15" width="21" height="34" rx="2.5" fill="none" stroke="#f6c343" stroke-width="1.6" stroke-dasharray="0" opacity=".55" transform="rotate(-12 32 32)" mask="url(#m)"/>
-</svg>
