@@ -34,7 +34,9 @@ h1 .old{display:inline-block;width:.7em;height:.7em;border-radius:50%;background
 .markets button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
 .markets button[aria-pressed=true] small{color:inherit;opacity:.7}
 .grid{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:18px;align-items:start}
-@media (max-width:900px){.grid{grid-template-columns:1fr}}
+@media (max-width:900px){.grid{grid-template-columns:1fr}.search{position:static}.results{max-height:50vh}}
+.grid>*{min-width:0}
+@media (max-width:600px){.wrap{padding:14px 12px 60px}.markets button{padding:7px 9px;font-size:14px}.markets button small{display:none}.totals{grid-template-columns:repeat(2,1fr)}.totals>div:nth-child(2){border-right:0}.totals>div:nth-child(-n+2){border-bottom:1px solid var(--line)}.toolbar{padding:12px}.cam{flex-direction:column;align-items:stretch}.camBtn{justify-content:center}}
 .panel{background:var(--paper);border:1px solid var(--line);border-radius:var(--r)}
 .search{position:sticky;top:12px}
 .search .box{padding:14px;border-bottom:1px solid var(--line)}
@@ -621,7 +623,17 @@ async function identify(blob){
   try{
     const r = await fetch('/.netlify/functions/identify', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({image:data, mediaType:'image/jpeg', prompt:AI_PROMPT})});
     if(r.ok) return parseJSON(await r.text());
-    if(r.status!==404) throw new Error('Serveur : '+r.status);
+    if(r.status!==404){
+      let msg='', j_status=0; try{ const j=await r.json(); msg=(j.error&&(j.error.message||''))||''; j_status=(j.error&&j.error.status)||0; }catch{}
+      const st = /exhausted|quota|rate limit/i.test(msg) || (j_status===429) ? 'Limite gratuite de l’IA atteinte pour le moment. Réessaie dans une minute (ou demain si c’est la limite du jour).'
+        : /API key not valid|API_KEY_INVALID|PERMISSION_DENIED/i.test(msg) ? 'Clé Gemini refusée : recopie ta clé dans Netlify (GEMINI_API_KEY), puis relance un déploiement.'
+        : msg.match(/credit balance/i) ? 'Plus de crédit sur ton compte Anthropic : ajoute du crédit dans console.anthropic.com › Billing.'
+        : /invalid x-api-key|authentication|401/i.test(msg) ? 'Clé API refusée : recopie ta clé dans Netlify (ANTHROPIC_API_KEY), puis relance un déploiement.'
+        : /model/i.test(msg) ? 'Modèle IA introuvable ('+msg+').'
+        : r.status===500 ? 'Aucune clé IA dans Netlify (GEMINI_API_KEY ou ANTHROPIC_API_KEY), ou le site n’a pas été redéployé après l’avoir ajoutée.'
+        : 'Erreur '+r.status+(msg?' : '+msg:'');
+      throw new Error('Serveur : '+st);
+    }
   }catch(e){ if(String(e.message||'').startsWith('Serveur')) throw e; }
   // 2) clé personnelle dans ce navigateur
   let key = ''; try{ key = localStorage.getItem('zap-anthropic-key')||''; }catch{}
@@ -662,7 +674,7 @@ async function onPhotos(files){
   if(!files || !files.length){ setCam('Aucune photo reçue. Réessaie, ou choisis une photo dans ta galerie.'); return; }
   if(!CARDS.length){ setCam('Le catalogue charge encore, réessaie dans quelques secondes.'); return; }
   const lbl = $('#camLbl'), st = $('#camStatus'); lbl.classList.add('busy');
-  const raws = [];
+  const raws = []; let hadErr = false;
   let added = 0, unknown = 0;
   try{
     for(let f=0; f<files.length; f++){
@@ -677,7 +689,8 @@ async function onPhotos(files){
         if(e && e.code==='nokey'){ pendingFiles = [...files].slice(f); $('#keyModal').classList.add('open'); st.textContent=''; return; }
         if(e && e.code==='not_granted'){ st.textContent = 'Accès à Claude refusé : la reconnaissance photo est désactivée.'; return; }
         if(e && e.code==='rate_limited'){ st.textContent = 'Trop de photos d’un coup, réessaie dans un moment.'; return; }
-        st.textContent = 'Erreur pendant l’analyse : ' + (e && (e.code || e.message) || 'inconnue') + '. Réessaie.'; raws.push('Erreur : '+JSON.stringify(e && (e.message||e))); showRaw(raws); continue;
+        hadErr = true;
+        st.textContent = String(e && e.message || '').startsWith('Serveur : ') ? e.message.slice(10) : 'Erreur pendant l’analyse : ' + (e && (e.code || e.message) || 'inconnue') + '. Réessaie.'; raws.push('Erreur : '+JSON.stringify(e && (e.message||e))); showRaw(raws); continue;
       }
       raws.push(JSON.stringify(res, null, 1)); showRaw(raws);
       const cards = (res && Array.isArray(res.cards)) ? res.cards : Array.isArray(res) ? res : (res && res.name_en ? [res] : []);
@@ -697,7 +710,7 @@ async function onPhotos(files){
     }
     if(added) st.textContent = `${added} carte${added>1?'s':''} ajoutée${added>1?'s':''}${unknown?`, ${unknown} lue${unknown>1?'s':''} mais introuvable${unknown>1?'s':''} dans le catalogue (voir « Ce que l'IA a lu »)`:''}. Vérifie l'état et mets ton prix.`;
     else if(unknown) st.textContent = `L'IA a lu ${unknown} carte${unknown>1?'s':''} mais je ne la${unknown>1?'es':''} trouve pas dans le catalogue. Regarde « Ce que l'IA a lu » et cherche-la à la main.`;
-    else if(!st.textContent.startsWith('Erreur')) st.textContent = 'L’IA ne voit aucune carte. Rapproche-toi : la carte doit remplir la photo, bien éclairée, sans reflet.';
+    else if(!hadErr) st.textContent = 'L’IA ne voit aucune carte. Rapproche-toi : la carte doit remplir la photo, bien éclairée, sans reflet.';
   } finally { lbl.classList.remove('busy'); $('#camIn').value=''; }
 }
 function showRaw(r){ $('#aiDbg').hidden = false; $('#aiRaw').textContent = r.join('\n\n'); }
