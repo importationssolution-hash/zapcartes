@@ -1,0 +1,9 @@
+# ZapCartes — site statique + 1 fonction serveur (reconnaissance photo)
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[[headers]]
+  for = "/catalog.json"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"

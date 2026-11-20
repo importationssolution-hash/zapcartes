@@ -1,0 +1,22 @@
+ZAPCARTES — MISE EN LIGNE SUR NETLIFY
+=====================================
+
+A) Sans la photo IA (le plus simple)
+   Glisse ce dossier sur https://app.netlify.com/drop
+   -> Tout marche, sauf la fonction serveur : le glisser-déposer ne déploie pas les fonctions.
+   -> Le bouton photo demandera alors une clé API Anthropic, gardée dans le navigateur.
+      OK pour TOI seul, pas pour des clients.
+
+B) Avec la photo IA pour tes clients (recommandé)
+   1. Installe Node.js (https://nodejs.org), puis dans un terminal :
+        npm install -g netlify-cli
+        netlify login
+   2. Dans ce dossier :
+        netlify deploy --prod
+      (choisis "Create & configure a new project" la première fois)
+   3. Sur netlify.com -> ton projet -> Project configuration -> Environment variables :
+        ANTHROPIC_API_KEY = ta clé (https://console.anthropic.com)
+   4. Relance : netlify deploy --prod
+   La clé reste sur le serveur, tes clients ne la voient jamais.
+   Coût : quelques centimes par photo, facturés sur TON compte Anthropic.
+   Pense à mettre une limite de dépenses dans la console Anthropic.
