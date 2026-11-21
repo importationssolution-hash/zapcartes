@@ -1,8 +1,9 @@
-// ZapCartes — reconnaissance de cartes par photo (fonction serveur Netlify).
+// 300mph — reconnaissance de cartes par photo (fonction serveur Netlify).
 // Les clés restent sur le serveur (Netlify › Project configuration › Environment variables) :
 //   GEMINI_API_KEY     → Google Gemini (formule gratuite, idéale pour les tests)
 //   ANTHROPIC_API_KEY  → Claude d'Anthropic (payant)
-// Si les deux existent, Claude est utilisé, sauf si AI_PROVIDER = "gemini".
+// Si les deux existent, Claude est utilisé en premier (Gemini sert de secours),
+// sauf si AI_PROVIDER = "gemini".
 const MAX_BYTES = 6 * 1024 * 1024;
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite").split(",").map((m) => m.trim()).filter(Boolean);
 const CLAUDE_MODEL = process.env.ZAP_MODEL || "claude-sonnet-5-5";
@@ -69,20 +70,30 @@ async function askGemini(key, image, mediaType, prompt) {
 }
 
 async function askClaude(key, image, mediaType, prompt) {
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL, max_tokens: 4000,
-      messages: [{ role: "user", content: [
-        { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
-        { type: "text", text: prompt },
-      ] }],
-    }),
-  });
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), DEADLINE_MS - 300);
+  let r;
+  try {
+    r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", signal: ctl.signal,
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL, max_tokens: 2000,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
+          { type: "text", text: prompt },
+        ] }],
+      }),
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    return { error: { status: 504, message: "L’IA a mis trop de temps à répondre (limite de 10 s de Netlify). Réessaie, ou prends une photo d’une seule carte." } };
+  }
+  clearTimeout(timer);
   if (!r.ok) {
     let msg = "";
     try { const e = await r.json(); msg = e.error?.message || e.error?.type || ""; } catch {}
+    if (r.status === 529) msg = "L’IA de Claude est surchargée en ce moment. Réessaie dans 1 ou 2 minutes.";
     return { error: { status: r.status, message: msg } };
   }
   const j = await r.json();
@@ -103,7 +114,17 @@ export default async (req) => {
     return new Response("Requête invalide", { status: 400 });
   if (!["image/jpeg", "image/png", "image/webp"].includes(mediaType)) return new Response("Type d'image refusé", { status: 400 });
 
-  const res = useGemini ? await askGemini(gKey, image, mediaType, prompt) : await askClaude(aKey, image, mediaType, prompt);
+  let res;
+  if (useGemini) res = await askGemini(gKey, image, mediaType, prompt);
+  else {
+    const t0 = Date.now();
+    res = await askClaude(aKey, image, mediaType, prompt);
+    // Claude refuse vite (crédit épuisé, surcharge, quota…) → on tente Gemini s'il y a une clé et du temps
+    if (res.error && gKey && res.error.status !== 504 && Date.now() - t0 < 3000) {
+      const g = await askGemini(gKey, image, mediaType, prompt);
+      if (!g.error) res = g;
+    }
+  }
   if (res.error) return fail(res.error.status, res.error.message);
   return new Response(res.text, { headers: { "content-type": "application/json; charset=utf-8" } });
 };
