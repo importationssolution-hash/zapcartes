@@ -116,6 +116,17 @@ td.nw{white-space:nowrap}
 .modal .panel{max-width:760px;width:100%;padding:18px}
 .modal textarea{width:100%;height:300px;font-family:var(--mono);font-size:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:10px}
 .flag{font-size:16px}
+.eb{max-width:720px}
+.eb h3{font-family:var(--disp);margin:0 0 6px;font-size:18px}
+.eb .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.eb label{font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:3px;min-width:180px;flex:1}
+.eb select,.eb input{padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:14px}
+.eb .box{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;background:var(--bg)}
+.eb .prog{max-height:240px;overflow:auto;font-size:13px}
+.eb .prog div{padding:4px 0;border-bottom:1px dashed var(--line)}
+.eb .ok{color:var(--green)} .eb .ko{color:var(--red)}
+.eb [hidden]{display:none !important}
+.ebayLink{font-size:12px;font-weight:600;color:var(--green)}
 .cam{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
 .camBtn{display:inline-flex;gap:8px;align-items:center;background:var(--red);border-color:var(--red);color:#fff;font-weight:700;padding:10px 14px;border-radius:10px;cursor:pointer}
 .camBtn.busy{opacity:.6;pointer-events:none}
@@ -214,6 +225,8 @@ td.nw{white-space:nowrap}
   <input id="keyIn" type="password" placeholder="sk-ant-…" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
   <div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary" id="keySave" data-i="keySave"></button></div>
 </div></div>
+<div class="modal" id="ebModal"><div class="panel eb" id="ebPanel"></div></div>
+<input type="file" id="rowPhoto" accept="image/*" hidden>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -322,6 +335,20 @@ fr: {
   amzT:'Titre', amzP:'Prix', amzQ:'Quantité', amzC:'État', amzCol:'Objet de collection',
   desc: (o,num,set,y,cond,lang,fin,rar) => `Carte Pokémon ${o.fr}${o.fr!==o.en?` (${o.en})`:''} – n° ${num} – extension ${set}${y?` (${y})`:''}.\nÉtat : ${cond}. Langue : ${lang}. Finition : ${fin}.${rar?` Rareté : ${rar}.`:''}\nCarte authentique, envoyée sous sleeve + toploader, enveloppe rigide.`,
   notes: n => `\nObservations : ${n}`,
+  ebDirect:'Publier directement', ebCsv:'Fichier CSV (brouillons)',
+  ebNoApi:'La publication directe marche sur ton site Netlify (pas dans l’aperçu Claude). En attendant, utilise le fichier CSV.',
+  ebNotConfigured:'La publication directe n’est pas encore configurée sur ce site. Le propriétaire doit ajouter les clés eBay dans Netlify (voir le guide).',
+  ebConnectTitle:'Connecte ton compte eBay', ebConnectText:'Tu seras redirigé vers eBay pour autoriser 300mph à créer des annonces en ton nom. Ton accès reste chiffré dans ce navigateur.',
+  ebConnect:'Connecter mon compte eBay', ebDisconnect:'Déconnecter eBay', ebConnected:'Compte eBay connecté ✓', ebSandbox:'(mode test « sandbox »)',
+  ebSettings: site => `Réglages pour ${site}`, ebFul:'Livraison', ebPay:'Paiement', ebRet:'Retours', ebLoc:'Lieu d’expédition', ebNewLoc:'+ Nouveau lieu…',
+  ebNoPolicy:'Aucune politique trouvée : crée-la dans eBay (Mon eBay › Compte › Politiques de vente), puis recharge.',
+  ebCountry:'Pays', ebPostal:'Code postal', ebAddLoc:'Ajouter ce lieu', ebLoading:'Chargement de tes réglages eBay…',
+  ebReady: (n,site) => `${n} ${pl(n,'carte')} ${n>1?'prêtes':'prête'} à publier sur ${site}`,
+  ebSkip: (p,f,d) => [p?`${p} sans prix`:'', f?`${f} sans photo`:'', d?`${d} déjà en ligne`:''].filter(Boolean).join(' · '),
+  ebGo: (n,site) => `Publier ${n} ${pl(n,'carte')} sur ${site}`, ebWorking: (i,n) => `Publication ${i}/${n}… (photo, description IA, annonce)`,
+  ebDone: (ok,ko) => `${ok} ${pl(ok,'annonce')} en ligne${ko?`, ${ko} en erreur`:''}.`, ebView:'Voir sur eBay ↗', ebOnline:'En ligne sur eBay',
+  ebErrPrefix: s => `Étape « ${s} » : `, ebConnectedToast:'Compte eBay connecté', ebStateErr:'La connexion eBay n’a pas pu être vérifiée. Réessaie.',
+  ebAddPhoto:'📷 Photo', ebPhotoAdded:'Photo ajoutée', ebAiBy: b => b==='modele' ? 'description modèle' : `description écrite par l’IA (${b})`,
 },
 en: {
   tagline: 'List your Pokémon cards at full speed.',
@@ -396,6 +423,20 @@ en: {
   amzT:'Title', amzP:'Price', amzQ:'Quantity', amzC:'Condition', amzCol:'Collectible',
   desc: (o,num,set,y,cond,lang,fin,rar) => `Pokémon card ${o.en} – #${num} – ${set}${y?` (${y})`:''}.\nCondition: ${cond}. Language: ${lang}. Finish: ${fin}.${rar?` Rarity: ${rar}.`:''}\nAuthentic card, shipped in a penny sleeve + toploader.`,
   notes: n => `\nNotes: ${n}`,
+  ebDirect:'Publish directly', ebCsv:'CSV file (drafts)',
+  ebNoApi:'Direct publishing works on your Netlify site (not in the Claude preview). Meanwhile, use the CSV file.',
+  ebNotConfigured:'Direct publishing isn’t set up on this site yet. The owner needs to add the eBay keys in Netlify (see the guide).',
+  ebConnectTitle:'Connect your eBay account', ebConnectText:'You’ll be sent to eBay to allow 300mph to create listings for you. Your access stays encrypted in this browser.',
+  ebConnect:'Connect my eBay account', ebDisconnect:'Disconnect eBay', ebConnected:'eBay account connected ✓', ebSandbox:'(“sandbox” test mode)',
+  ebSettings: site => `Settings for ${site}`, ebFul:'Shipping', ebPay:'Payment', ebRet:'Returns', ebLoc:'Ship-from location', ebNewLoc:'+ New location…',
+  ebNoPolicy:'No policy found: create it on eBay (My eBay › Account › Business policies), then reload.',
+  ebCountry:'Country', ebPostal:'Postal code', ebAddLoc:'Add this location', ebLoading:'Loading your eBay settings…',
+  ebReady: (n,site) => `${n} ${pl(n,'card')} ready to publish on ${site}`,
+  ebSkip: (p,f,d) => [p?`${p} without price`:'', f?`${f} without photo`:'', d?`${d} already live`:''].filter(Boolean).join(' · '),
+  ebGo: (n,site) => `Publish ${n} ${pl(n,'card')} on ${site}`, ebWorking: (i,n) => `Publishing ${i}/${n}… (photo, AI description, listing)`,
+  ebDone: (ok,ko) => `${ok} ${pl(ok,'listing')} live${ko?`, ${ko} failed`:''}.`, ebView:'View on eBay ↗', ebOnline:'Live on eBay',
+  ebErrPrefix: s => `Step “${s}”: `, ebConnectedToast:'eBay account connected', ebStateErr:'The eBay connection couldn’t be verified. Try again.',
+  ebAddPhoto:'📷 Photo', ebPhotoAdded:'Photo added', ebAiBy: b => b==='modele' ? 'template description' : `AI-written description (${b})`,
 }};
 // Français canadien : vocabulaire et formules d'ici
 const FR_CA = {
@@ -574,7 +615,7 @@ function renderList(flashId){
       <td class="conv">${it.price? others : '—'}</td>
       <td class="links"><div>${links(o,it).map(([l,u])=>`<a href="${esc(u)}" target="_blank" rel="noopener">${esc(l)} ↗</a>`).join('')}</div></td>
       <td><button class="x" data-act="del" title="${t('remove')}">×</button></td></tr>
-      <tr data-id="${it.id}" class="sub${fl}"><td colspan="7"><div class="title"><em>${t('adTitle')}</em><span>${esc(listingTitle(it,o))}</span><button data-act="copyTitle">${t('copyTitle')}</button><button data-act="copyAd">${t('copyAd')}</button></div></td></tr>`;
+      <tr data-id="${it.id}" class="sub${fl}"><td colspan="7"><div class="title"><em>${t('adTitle')}</em><span>${esc(listingTitle(it,o))}</span><button data-act="copyTitle">${t('copyTitle')}</button><button data-act="copyAd">${t('copyAd')}</button>${PHOTO_URL[it.id]?'':`<button data-act="addPhoto">${t('ebAddPhoto')}</button>`}${(it.ebay&&it.ebay[EB_MKT()]&&it.ebay[EB_MKT()].url)?` <a class="ebayLink" href="${esc(it.ebay[EB_MKT()].url)}" target="_blank" rel="noopener">✓ ${t('ebOnline')} ↗</a>`:''}</div></td></tr>`;
   }).join('');
   renderTotals();
 }
@@ -674,6 +715,7 @@ $('#rows').addEventListener('click', async e=>{
   const a = e.target.dataset.act; if(!a) return;
   const id = e.target.closest('tr').dataset.id, it = items.find(x=>x.id===id);
   if(a==='del'){ items = items.filter(x=>x.id!==id); photoDel(id); save({...it, __deleted:true}); renderList(); }
+  if(a==='addPhoto'){ photoTarget = id; $('#rowPhoto').click(); return; }
   if(a==='zoom'){ $('#zoomImg').src = e.target.src; $('#zoom').classList.add('open'); return; }
   if(a==='copyTitle') copy(listingTitle(it, cardOf(it)), t('titleCopied'));
   if(a==='copyAd'){ const o=cardOf(it); copy(listingTitle(it,o)+'\n'+fmt(salePrice(it),MK[market].cur)+'\n\n'+describe(it,o), t('adCopied')); }
@@ -735,6 +777,7 @@ const AMZ = {FR:'sellercentral.amazon.fr', CA:'sellercentral.amazon.ca', US:'sel
 function openPub(kind, tab){
   if(!items.length) return toast(t('listEmptyToast'));
   const flag = {FR:'🇫🇷 eBay.fr',CA:'🇨🇦 eBay.ca',US:'🇺🇸 eBay.com'}[market], site = {FR:'eBay.fr',CA:'eBay.ca',US:'eBay.com'}[market];
+  if(kind==='ebay' && tab!=='csv'){ openEbay(); return; }
   if(kind==='ebay'){
     openModal(t('ebayTitle', flag, MK[market].cur), ebayCSV(market),
       t('ebayHow', items.length, `<input id="ebayCat" value="${esc(ebayCat)}" style="width:80px">`, site),
@@ -919,6 +962,164 @@ let pendingFiles = null;
 $('#camIn').addEventListener('change', e=>onPhotos(e.target.files));
 $('#keySave').onclick = ()=>{ const k=$('#keyIn').value.trim(); if(!k) return; try{ localStorage.setItem('zap-anthropic-key',k); }catch{} $('#keyModal').classList.remove('open'); if(pendingFiles){ const f=pendingFiles; pendingFiles=null; onPhotos(f); } };
 
+
+// ---------- eBay : publication directe ----------
+const EB_SITES = {FR:'eBay.fr', CA:'eBay.ca', US:'eBay.com'};
+const EB_MKT = () => ({FR:'EBAY_FR', CA:'EBAY_CA', US:'EBAY_US'})[market];
+const EB_LANG = () => market==='FR' ? 'fr-FR' : market==='US' ? 'en-US' : (caLang==='fr' ? 'fr-CA' : 'en-CA');
+const ls = { get(k,d){ try{ const v = localStorage.getItem(k); return v==null ? d : JSON.parse(v); }catch{ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }, del(k){ try{ localStorage.removeItem(k); }catch{} } };
+let ebStatus = null, ebSetupCache = {}, ebBusy = false, photoTarget = null;
+async function ebCall(path, body){
+  const r = await fetch('/api/ebay/'+path, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+  const txt = await r.text(); let j = null; try{ j = JSON.parse(txt); }catch{}
+  if(!j) throw new Error('HTTP '+r.status);
+  if(!j.ok){ const e = new Error(j.error && j.error.message || 'Erreur'); e.step = j.error && j.error.step; throw e; }
+  return j;
+}
+async function ebGetStatus(){
+  if(ebStatus) return ebStatus;
+  try{ const r = await fetch('/api/ebay/status'); ebStatus = r.ok ? await r.json() : {api:false}; ebStatus.api = r.ok; }
+  catch{ ebStatus = {api:false}; }
+  return ebStatus;
+}
+function ebShell(inner){
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>eBay — ${EB_SITES[market]} (${MK[market].cur})</b><button class="x" data-eb="close">×</button></div>
+  <div class="tabs"><button aria-pressed="true">${t('ebDirect')}</button><button data-eb="csv" aria-pressed="false">${t('ebCsv')}</button></div>${inner}`;
+}
+async function openEbay(){
+  $('#ebModal').classList.add('open');
+  const P = $('#ebPanel');
+  P.innerHTML = ebShell(`<p class="status">${t('ebLoading')}</p>`);
+  const st = await ebGetStatus();
+  if(!st.api){ P.innerHTML = ebShell(`<p>${t('ebNoApi')}</p>`); return; }
+  if(!st.configured){ P.innerHTML = ebShell(`<p>${t('ebNotConfigured')}</p>`); return; }
+  const token = ls.get('zap-ebay-token', null);
+  if(!token){
+    P.innerHTML = ebShell(`<div class="box"><h3>${t('ebConnectTitle')}</h3><p style="font-size:14px">${t('ebConnectText')}</p><button class="btn primary" data-eb="connect">${t('ebConnect')}</button></div>`);
+    return;
+  }
+  const mkt = EB_MKT();
+  let setup = ebSetupCache[mkt];
+  if(!setup){
+    P.innerHTML = ebShell(`<p class="status">${t('ebLoading')}</p>`);
+    try{ setup = ebSetupCache[mkt] = await ebCall('setup', {token, marketplace: mkt}); }
+    catch(e){ P.innerHTML = ebShell(`<p class="ko">${esc(e.message)}</p><div class="row"><button class="btn" data-eb="connect">${t('ebConnect')}</button><button class="btn danger" data-eb="disconnect">${t('ebDisconnect')}</button></div>`); return; }
+  }
+  renderEbay(setup);
+}
+function ebPolicySelect(key, list, cfg){
+  if(!Array.isArray(list)) return `<label>${t(key==='fulfillment'?'ebFul':key==='payment'?'ebPay':'ebRet')}<span class="ko">${esc(list && list.error || '?')}</span></label>`;
+  if(!list.length) return `<label>${t(key==='fulfillment'?'ebFul':key==='payment'?'ebPay':'ebRet')}<span class="ko" style="font-size:12px">${t('ebNoPolicy')}</span></label>`;
+  if(!cfg[key] || !list.some(p=>p.id===cfg[key])) cfg[key] = list[0].id;
+  return `<label>${t(key==='fulfillment'?'ebFul':key==='payment'?'ebPay':'ebRet')}<select data-ebcfg="${key}">${list.map(p=>`<option value="${esc(p.id)}"${p.id===cfg[key]?' selected':''}>${esc(p.name)}</option>`).join('')}</select></label>`;
+}
+function ebEligible(){
+  const mkt = EB_MKT(); let noPrice=0, noPhoto=0, done=0; const ok=[];
+  for(const it of items){
+    if(it.ebay && it.ebay[mkt] && it.ebay[mkt].listingId){ done++; continue; }
+    if(!(+it.price>0)){ noPrice++; continue; }
+    if(!PHOTO_URL[it.id]){ noPhoto++; continue; }
+    ok.push(it);
+  }
+  return {ok, noPrice, noPhoto, done};
+}
+function renderEbay(setup){
+  const mkt = EB_MKT(), site = EB_SITES[market];
+  const allCfg = ls.get('zap-ebay-cfg', {}); const cfg = allCfg[mkt] || {};
+  const locs = Array.isArray(setup.locations) ? setup.locations.slice() : [];
+  if(cfg.locationKey && !locs.some(l=>l.key===cfg.locationKey)) locs.unshift({key: cfg.locationKey, name: cfg.locationKey}); // lieu tout juste créé
+  if(!cfg.locationKey) cfg.locationKey = locs[0] ? locs[0].key : '';
+  const polHtml = ebPolicySelect('fulfillment', setup.fulfillment, cfg) + ebPolicySelect('payment', setup.payment, cfg) + ebPolicySelect('returns', setup.returns, cfg);
+  allCfg[mkt] = cfg; ls.set('zap-ebay-cfg', allCfg);
+  const el = ebEligible();
+  const cc = {FR:'FR', CA:'CA', US:'US'}[market];
+  $('#ebPanel').innerHTML = ebShell(`
+    <p class="ok" style="font-size:13px;margin:4px 0">${t('ebConnected')} ${setup.sandbox?t('ebSandbox'):''} · <a href="#" data-eb="disconnect">${t('ebDisconnect')}</a></p>
+    <div class="box"><h3>${t('ebSettings', site)}</h3>
+      <div class="row">${polHtml}</div>
+      <div class="row"><label>${t('ebLoc')}<select data-ebcfg="locationKey">${locs.map(l=>`<option value="${esc(l.key)}"${l.key===cfg.locationKey?' selected':''}>${esc(l.name)}${l.postalCode?' · '+esc(l.postalCode):''}</option>`).join('')}<option value="__new"${locs.length?'':' selected'}>${t('ebNewLoc')}</option></select></label></div>
+      <div class="row" id="ebNewLoc" ${locs.length?'hidden':''}><label style="min-width:90px;flex:0">${t('ebCountry')}<select id="ebCc">${['CA','US','FR','BE','CH'].map(c=>`<option${c===cc?' selected':''}>${c}</option>`).join('')}</select></label><label>${t('ebPostal')}<input id="ebPc" autocomplete="postal-code"></label><button class="btn" data-eb="addloc" style="align-self:flex-end">${t('ebAddLoc')}</button></div>
+    </div>
+    <div class="box">
+      <b>${t('ebReady', el.ok.length, site)}</b> <span class="status">${esc(t('ebSkip', el.noPrice, el.noPhoto, el.done))}</span>
+      <div class="row"><button class="btn primary" data-eb="publish" ${el.ok.length && cfg.locationKey && cfg.fulfillment && cfg.payment && cfg.returns ? '' : 'disabled'}>${t('ebGo', el.ok.length, site)}</button></div>
+      <div class="prog" id="ebProg"></div>
+    </div>`);
+}
+function ebImageB64(id){
+  return new Promise(async (res)=>{ try{ const d=await idb(); const q=d.transaction('photos').objectStore('photos').get(id); q.onsuccess=async()=>{ res(q.result ? await b64(q.result) : null); }; q.onerror=()=>res(null); }catch{ res(null); } });
+}
+function ebInfo(it, o){
+  const ll = listLang(market), c = COND[it.cond]||COND[1], v = VARS[it.variant]||VARS.normal;
+  return { name: ll==='fr'?o.fr:o.en, character: o.cat==='P' ? (ll==='fr'?o.fr:o.en).replace(/\s+(ex|EX|GX|V|VMAX|VSTAR|BREAK)$/,'') : '',
+    set: ll==='fr'?o.setFr:o.setEn, setCode: o.ab||o.setId, number: numStr(o), language: ll==='fr' ? (LANG_FR[it.lang]||it.lang).replace(/^./,x=>x.toUpperCase()) : (LANG_EN[it.lang]||it.lang),
+    rarity: ll==='fr' ? (RAR[o.rarity]||o.rarity) : o.rarity, finish: ll==='fr' ? v.fr : (v.en||'Regular'), year: (o.date||'').slice(0,4),
+    condition: market==='FR' ? c.FR : c.US, notes: ll==='fr' ? (it.notes||'') : (it.notesEn||''), cardType: o.cat==='P' ? 'Pokémon' : o.cat==='T' ? (ll==='fr'?'Dresseur':'Trainer') : o.cat==='E' ? (ll==='fr'?'Énergie':'Energy') : '' };
+}
+async function ebPublishAll(){
+  if(ebBusy) return; ebBusy = true;
+  const mkt = EB_MKT(), token = ls.get('zap-ebay-token', null), cfg = (ls.get('zap-ebay-cfg', {})[mkt]) || {};
+  const list = ebEligible().ok, prog = $('#ebProg'); let ok=0, ko=0;
+  const btn = document.querySelector('[data-eb="publish"]'); if(btn) btn.disabled = true;
+  for(let i=0;i<list.length;i++){
+    const it = list[i], o = cardOf(it); if(!o) continue;
+    const line = document.createElement('div'); line.textContent = `⏳ ${listingTitle(it,o)}`; prog.prepend(line);
+    if(btn) btn.textContent = t('ebWorking', i+1, list.length);
+    try{
+      const image = await ebImageB64(it.id);
+      const fb = '<p>' + esc(describe(it,o)).replace(/\n/g,'<br>') + '</p>';
+      const res = await ebCall('publish', { token, marketplace: mkt, lang: EB_LANG(), sku: `300MPH-${it.id}-${mkt}`, title: listingTitle(it,o), price: +salePrice(it).toFixed(2), quantity: it.qty, condition: it.cond,
+        image, mediaType:'image/jpeg', policies:{fulfillment: cfg.fulfillment, payment: cfg.payment, returns: cfg.returns}, locationKey: cfg.locationKey, info: ebInfo(it,o), fallbackDescription: fb });
+      it.ebay = it.ebay || {}; it.ebay[mkt] = { listingId: res.listingId, url: res.url, at: Date.now() }; save(it);
+      line.className='ok'; line.innerHTML = `✅ ${esc(listingTitle(it,o))} — <a href="${esc(res.url||'#')}" target="_blank" rel="noopener">${t('ebView')}</a> <span class="status">${esc(t('ebAiBy', res.descriptionBy))}</span>`; ok++;
+    }catch(e){
+      line.className='ko'; line.textContent = `❌ ${listingTitle(it,o)} — ${e.step ? t('ebErrPrefix', e.step) : ''}${e.message}`; ko++;
+      if(e.step==='auth' || e.step==='config' || e.step==='reglages') break;
+    }
+  }
+  ebBusy = false; renderList();
+  const done = document.createElement('div'); done.innerHTML = `<b>${esc(t('ebDone', ok, ko))}</b>`; prog.prepend(done);
+  if(btn){ btn.textContent = t('ebDone', ok, ko); }
+}
+$('#ebModal').addEventListener('click', async e=>{
+  const a = e.target.closest('[data-eb]'); if(!a){ if(e.target.id==='ebModal') $('#ebModal').classList.remove('open'); return; }
+  const act = a.dataset.eb; e.preventDefault();
+  if(act==='close'){ $('#ebModal').classList.remove('open'); }
+  else if(act==='csv'){ $('#ebModal').classList.remove('open'); openPub('ebay','csv'); }
+  else if(act==='connect'){ const st = Math.random().toString(36).slice(2)+Date.now().toString(36); ls.set('zap-ebay-state', st); location.href = '/api/ebay/login?state='+st; }
+  else if(act==='disconnect'){ ls.del('zap-ebay-token'); ebSetupCache = {}; openEbay(); }
+  else if(act==='addloc'){
+    const token = ls.get('zap-ebay-token', null);
+    try{ a.disabled = true; const r = await ebCall('location', {token, country: $('#ebCc').value, postalCode: $('#ebPc').value});
+      const allCfg = ls.get('zap-ebay-cfg', {}); (allCfg[EB_MKT()] = allCfg[EB_MKT()]||{}).locationKey = r.key; ls.set('zap-ebay-cfg', allCfg);
+      delete ebSetupCache[EB_MKT()]; openEbay(); }
+    catch(err){ a.disabled = false; toast(err.message); }
+  }
+  else if(act==='publish'){ ebPublishAll(); }
+});
+$('#ebModal').addEventListener('change', e=>{
+  const k = e.target.dataset.ebcfg; if(!k) return;
+  if(k==='locationKey' && e.target.value==='__new'){ $('#ebNewLoc').hidden = false; return; }
+  const allCfg = ls.get('zap-ebay-cfg', {}); (allCfg[EB_MKT()] = allCfg[EB_MKT()]||{})[k] = e.target.value; ls.set('zap-ebay-cfg', allCfg);
+  if(k==='locationKey') $('#ebNewLoc').hidden = true;
+  renderEbay(ebSetupCache[EB_MKT()]);
+});
+$('#rowPhoto').addEventListener('change', async e=>{
+  const f = e.target.files && e.target.files[0]; e.target.value=''; if(!f || !photoTarget) return;
+  const it = items.find(x=>x.id===photoTarget); if(!it) return;
+  try{ const blob = await shrink(f); await photoPut(it.id, blob); it.photo = true; save(it); renderList(it.id); toast(t('ebPhotoAdded')); }catch(err){ toast(t('imgRejected')); }
+});
+// retour de la connexion eBay (…/#ebay-token=…&ebay-state=…)
+(function ebReturn(){
+  if(!/ebay-(token|error)=/.test(location.hash)) return;
+  const h = new URLSearchParams(location.hash.slice(1));
+  try{ history.replaceState(null, '', location.pathname + location.search); }catch{ location.hash = ''; }
+  if(h.get('ebay-error')){ setTimeout(()=>toast(h.get('ebay-error')), 300); return; }
+  if(h.get('ebay-state') !== ls.get('zap-ebay-state', '')){ setTimeout(()=>toast(t('ebStateErr')), 300); return; }
+  ls.set('zap-ebay-token', h.get('ebay-token')); ls.del('zap-ebay-state');
+  setTimeout(()=>{ toast(t('ebConnectedToast')); openEbay(); }, 600);
+})();
+
 // ---------- chargement ----------
 fetch('catalog.json').then(r=>r.json()).then(d=>{
   SETS = d.sets; CARDS = d.cards;
@@ -936,4 +1137,4 @@ initStore();
 })();
 </script>
 </body>
-</html>
+                                                                                                                                                       </html>
