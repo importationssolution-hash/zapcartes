@@ -349,6 +349,8 @@ fr: {
   ebDone: (ok,ko) => `${ok} ${pl(ok,'annonce')} en ligne${ko?`, ${ko} en erreur`:''}.`, ebView:'Voir sur eBay ↗', ebOnline:'En ligne sur eBay',
   ebErrPrefix: s => `Étape « ${s} » : `, ebConnectedToast:'Compte eBay connecté', ebStateErr:'La connexion eBay n’a pas pu être vérifiée. Réessaie.',
   ebAddPhoto:'📷 Photo', ebPhotoAdded:'Photo ajoutée', ebAiBy: b => b==='modele' ? 'description modèle' : `description écrite par l’IA (${b})`,
+  ebPasteTitle:'eBay t’a affiché une page « Thank You » ?', ebPasteText:'Copie l’adresse complète de cette page (barre d’adresse en haut) et colle-la ici, dans les 5 minutes :',
+  ebPastePh:'https://auth2.ebay.com/oauth2/ThirdPartyAuthSucessFailure?…code=…', ebPasteGo:'Terminer la connexion', ebPasteNoCode:'Je ne trouve pas de code dans cette adresse. Recommence la connexion, puis copie l’adresse de la page « Thank You ».',
 },
 en: {
   tagline: 'List your Pokémon cards at full speed.',
@@ -437,6 +439,8 @@ en: {
   ebDone: (ok,ko) => `${ok} ${pl(ok,'listing')} live${ko?`, ${ko} failed`:''}.`, ebView:'View on eBay ↗', ebOnline:'Live on eBay',
   ebErrPrefix: s => `Step “${s}”: `, ebConnectedToast:'eBay account connected', ebStateErr:'The eBay connection couldn’t be verified. Try again.',
   ebAddPhoto:'📷 Photo', ebPhotoAdded:'Photo added', ebAiBy: b => b==='modele' ? 'template description' : `AI-written description (${b})`,
+  ebPasteTitle:'Did eBay show you a “Thank You” page?', ebPasteText:'Copy the full address of that page (address bar at the top) and paste it here, within 5 minutes:',
+  ebPastePh:'https://auth2.ebay.com/oauth2/ThirdPartyAuthSucessFailure?…code=…', ebPasteGo:'Finish connecting', ebPasteNoCode:'I can’t find a code in that address. Connect again, then copy the address of the “Thank You” page.',
 }};
 // Français canadien : vocabulaire et formules d'ici
 const FR_CA = {
@@ -692,7 +696,9 @@ $('#caLang').addEventListener('click', e=>{
 });
 
 const q = $('#q');
-q.addEventListener('input', ()=>{ results = search(q.value); sel = 0; renderResults(); });
+q.addEventListener('input', ()=>{
+  if(ebCodeFrom(q.value)){ const v = q.value; q.value = ''; results = []; renderResults(); ebExchangeFrom(v); return; }
+  results = search(q.value); sel = 0; renderResults(); });
 q.addEventListener('keydown', e=>{
   if(e.key==='ArrowDown'){ e.preventDefault(); sel=Math.min(sel+1, results.length-1); renderResults(); scrollSel(); }
   else if(e.key==='ArrowUp'){ e.preventDefault(); sel=Math.max(sel-1,0); renderResults(); scrollSel(); }
@@ -995,7 +1001,9 @@ async function openEbay(){
   if(!st.configured){ P.innerHTML = ebShell(`<p>${t('ebNotConfigured')}</p>`); return; }
   const token = ls.get('zap-ebay-token', null);
   if(!token){
-    P.innerHTML = ebShell(`<div class="box"><h3>${t('ebConnectTitle')}</h3><p style="font-size:14px">${t('ebConnectText')}</p><button class="btn primary" data-eb="connect">${t('ebConnect')}</button></div>`);
+    P.innerHTML = ebShell(`<div class="box"><h3>${t('ebConnectTitle')}</h3><p style="font-size:14px">${t('ebConnectText')}</p><button class="btn primary" data-eb="connect">${t('ebConnect')}</button></div>
+      <div class="box"><b>${t('ebPasteTitle')}</b><p style="font-size:13.5px;margin:6px 0">${t('ebPasteText')}</p>
+      <div class="row"><input id="ebPaste" style="flex:1;min-width:200px" placeholder="${esc(t('ebPastePh'))}" autocomplete="off"><button class="btn" data-eb="paste">${t('ebPasteGo')}</button></div></div>`);
     return;
   }
   const mkt = EB_MKT();
@@ -1081,12 +1089,34 @@ async function ebPublishAll(){
   const done = document.createElement('div'); done.innerHTML = `<b>${esc(t('ebDone', ok, ko))}</b>`; prog.prepend(done);
   if(btn){ btn.textContent = t('ebDone', ok, ko); }
 }
+
+function ebCodeFrom(raw){
+  raw = String(raw||'').trim(); if(!/ebay\./i.test(raw) || !/code=/.test(raw)) return null;
+  let code = null; try{ code = new URL(raw).searchParams.get('code'); }catch{}
+  if(!code){ const m = raw.match(/[?&]code=([^&\s]+)/); if(m){ try{ code = decodeURIComponent(m[1]); }catch{ code = m[1]; } } }
+  return code;
+}
+async function ebExchangeFrom(raw){
+  const code = ebCodeFrom(raw);
+  if(!code){ toast(t('ebPasteNoCode')); return false; }
+  try{
+    const res = await fetch('/api/ebay/exchange', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({code})});
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error && j.error.message || 'Erreur');
+    ls.set('zap-ebay-token', j.token); ebSetupCache = {}; toast(t('ebConnectedToast')); openEbay(); return true;
+  }catch(err){ toast(err.message); return false; }
+}
 $('#ebModal').addEventListener('click', async e=>{
   const a = e.target.closest('[data-eb]'); if(!a){ if(e.target.id==='ebModal') $('#ebModal').classList.remove('open'); return; }
   const act = a.dataset.eb; e.preventDefault();
   if(act==='close'){ $('#ebModal').classList.remove('open'); }
   else if(act==='csv'){ $('#ebModal').classList.remove('open'); openPub('ebay','csv'); }
   else if(act==='connect'){ const st = Math.random().toString(36).slice(2)+Date.now().toString(36); ls.set('zap-ebay-state', st); location.href = '/api/ebay/login?state='+st; }
+  else if(act==='paste'){
+    a.disabled = true;
+    const ok = await ebExchangeFrom($('#ebPaste').value);
+    if(!ok) a.disabled = false;
+  }
   else if(act==='disconnect'){ ls.del('zap-ebay-token'); ebSetupCache = {}; openEbay(); }
   else if(act==='addloc'){
     const token = ls.get('zap-ebay-token', null);
@@ -1137,4 +1167,4 @@ initStore();
 })();
 </script>
 </body>
-                                                                                                                                                       </html>
+</html>
