@@ -849,15 +849,16 @@ async function photoLoadAll(){ try{ const d=await idb(); await Promise.all(items
 const AI_PROMPT = `You identify Pokémon Trading Card Game cards from a photo, for a seller listing them for sale.
 The photo may show one card or several (for example a binder page). For EACH card you can see, read what is printed on it.
 Reply with ONLY this JSON, no other text:
-{"cards":[{"name_en":"the card's name as on English/international prints, e.g. \"Charizard ex\" or \"Professor's Research\"","name_printed":"the name exactly as printed (any language/script)","language":"FR|EN|JP|KO|ZH-T|ZH-S|DE|ES|IT|PT","number":"collector number before the slash as printed, e.g. \"025\", \"TG05\", \"SWSH050\"","set_total":"number after the slash, or \"\"","set_code":"set code printed near the bottom (e.g. \"PAL\", \"MEW\", \"SV2a\", \"sv4a\") or \"\"","variant":"normal|holo|reverse|first","condition":1,"condition_notes_fr":"short French note on visible wear: corners, edges/whitening, surface scratches, centering. If none: \"Aucun défaut visible sur la photo\"","condition_notes_en":"same note in English","confidence":0.9}]}
+{"cards":[{"name_en":"the card's name as on English/international prints, e.g. \"Charizard ex\" or \"Professor's Research\"","name_printed":"the name exactly as printed (any language/script)","language":"FR|EN|JP|KO|ZH-T|ZH-S|DE|ES|IT|PT","number":"collector number before the slash as printed, e.g. \"025\", \"TG05\", \"SWSH050\"","set_total":"number after the slash, or \"\"","set_code":"set code printed near the bottom (e.g. \"PAL\", \"MEW\", \"SV2a\", \"sv4a\") or \"\"","variant":"normal|holo|reverse|first","condition":1,"condition_notes_fr":"short French note on visible wear: corners, edges/whitening, surface scratches, centering. If none: \"Aucun défaut visible sur la photo\"","condition_notes_en":"same note in English","confidence":0.9,"box":{"left":120,"top":80,"right":430,"bottom":520}}]}
 condition is an integer: 0 Mint, 1 Near Mint, 2 Excellent/Lightly played, 3 Good/Moderately played, 4 Played/Heavily played, 5 Poor/Damaged. Judge only what the photo shows and be conservative.
 "first" only if a 1st Edition stamp is visible. "reverse" if the foil is on the card body and not on the artwork.
-confidence (0 to 1) is how sure you are of name + number + set. If no card is visible, reply {"cards":[]}. Never invent prices.`;
+confidence (0 to 1) is how sure you are of name + number + set. If no card is visible, reply {"cards":[]}. Never invent prices.
+box is where that card is in the photo: its outer edges (left, top, right, bottom), as whole numbers from 0 to 1000 measured from the photo's top-left corner (left/right relative to the photo width, top/bottom relative to its height). Include the whole card, borders included.`;
 
-async function shrink(file){
+async function shrink(file, max=1280){
   try{
     const bmp = await createImageBitmap(file, {imageOrientation:'from-image'});
-    const k = Math.min(1, 1280/Math.max(bmp.width,bmp.height));
+    const k = Math.min(1, max/Math.max(bmp.width,bmp.height));
     const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width*k); cv.height = Math.round(bmp.height*k);
     cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);
     return await new Promise(r=>cv.toBlob(r,'image/jpeg',0.85));
@@ -956,6 +957,9 @@ async function onPhotos(files){
       }
       raws.push(JSON.stringify(res, null, 1)); showRaw(raws);
       const cards = (res && Array.isArray(res.cards)) ? res.cards : Array.isArray(res) ? res : (res && res.name_en ? [res] : []);
+      // Plusieurs cartes sur la photo : chaque carte reçoit sa propre photo découpée (en haute définition)
+      let hi = null;
+      if(cards.length > 1){ try{ hi = await shrink(files[f], 3200); }catch{ hi = blob; } }
       for(const c of cards){
         const m = matchAI(c);
         if(!m.list.length){ unknown++; continue; }
@@ -966,7 +970,9 @@ async function onPhotos(files){
         const it = { id: uid(), card: o.key, qty: 1, cond: Math.max(0,Math.min(5, parseInt(c.condition)||1)), lang, variant, price: 0, cur: MK[market].cur, added: Date.now(),
           ai: true, conf, notes: String(c.condition_notes_fr||'').slice(0,300), notesEn: String(c.condition_notes_en||'').slice(0,300),
           alts: m.list.map(i=>cardObj(i).key), photo: true };
-        items.unshift(it); await photoPut(it.id, blob); save(it); added++;
+        const own = hi ? (await cropCard(hi, c.box)) : null;
+        if(own) it.cropped = true;
+        items.unshift(it); await photoPut(it.id, own || blob); save(it); added++;
       }
       renderList(items[0] && items[0].id);
     }
@@ -974,6 +980,24 @@ async function onPhotos(files){
     else if(unknown) st.textContent = t('resUnknown', unknown);
     else if(!hadErr) st.textContent = t('resNone');
   } finally { lbl.classList.remove('busy'); $('#camIn').value=''; }
+}
+// Découpe une carte dans la photo d'après la case renvoyée par l'IA (0-1000). null si la case n'est pas fiable.
+async function cropCard(src, box){
+  try{
+    if(!box) return null;
+    let l=+box.left, tp=+box.top, r=+box.right, b=+box.bottom;
+    if(![l,tp,r,b].every(Number.isFinite)) return null;
+    if(l>r) [l,r]=[r,l]; if(tp>b) [tp,b]=[b,tp];
+    const bmp = await createImageBitmap(src), W = bmp.width, H = bmp.height;
+    let x=l/1000*W, y=tp/1000*H, w=(r-l)/1000*W, h=(b-tp)/1000*H;
+    if(w < W*0.05 || h < H*0.05 || (w*h) > W*H*0.92) return null;      // trop petit, ou c'est déjà la photo entière
+    const ratio = Math.min(w,h)/Math.max(w,h); if(ratio < 0.45 || ratio > 0.95) return null; // pas une forme de carte
+    const px = w*0.06, py = h*0.06;                                          // marge : coins et bords restent visibles
+    x = Math.max(0, x-px); y = Math.max(0, y-py); w = Math.min(W-x, w+2*px); h = Math.min(H-y, h+2*py);
+    const cv = document.createElement('canvas'); cv.width = Math.round(w); cv.height = Math.round(h);
+    cv.getContext('2d').drawImage(bmp, x, y, w, h, 0, 0, cv.width, cv.height);
+    return await new Promise(res=>cv.toBlob(res,'image/jpeg',0.9));
+  }catch{ return null; }
 }
 function showRaw(r){ $('#aiDbg').hidden = false; $('#aiRaw').textContent = r.join('\n\n'); }
 let pendingFiles = null;
@@ -1222,4 +1246,4 @@ initStore();
 })();
 </script>
 </body>
-</html>
+                                                       </html>
