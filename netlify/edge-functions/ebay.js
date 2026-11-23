@@ -307,7 +307,7 @@ function pickCodes(list, [re, fallback], intl) {
   const valid = new Set(list.map((s) => s.code));
   return [...new Set([...found, ...fallback.filter((c) => !list.length || valid.has(c)), ...fallback])].slice(0, 3);
 }
-const notEligible = (e) => /eligible|opt.?in|business polic/i.test(e.message || "") || (e.ids || []).includes(20403);
+const notEligible = (e) => (e.ids || []).includes(20403) || /not eligible|opt(ed)?[ -]?in to|n.est pas admissible/i.test(e.message || "");
 const money = (v) => Math.max(0, Math.round((+v || 0) * 100) / 100);
 async function createPolicies(req) {
   const { token, marketplace, returnsAccepted, ship = {}, shippingOnly } = await req.json();
@@ -483,12 +483,20 @@ async function repairReturns(t, mkt, lang, returnId, offer, offerId, doPublish, 
   const path = `/sell/account/v1/return_policy/${returnId}`;
   const cur = (await ebay("retours", t, "GET", path, { lang })).data || {};
   const { returnPolicyId, ...base } = cur;
-  // 1) mêmes retours pour les acheteurs des États-Unis (envoi international)
+  // 1) on complète la règle : remboursement en argent (+ mêmes retours pour les États-Unis)
   if (base.returnsAccepted) {
-    const intl = { returnsAccepted: true, returnPeriod: base.returnPeriod || { value: 30, unit: "DAY" }, returnShippingCostPayer: base.returnShippingCostPayer || "BUYER", returnMethod: "MONEY_BACK" };
-    for (const io of [intl, { returnsAccepted: true, returnPeriod: intl.returnPeriod, returnShippingCostPayer: intl.returnShippingCostPayer }, { returnsAccepted: false }]) {
-      try { await ebay("retours", t, "PUT", path, { lang, body: { ...base, internationalOverride: io } }); return await doPublish(); }
-      catch (x) { tries.push(`retours internationaux ${io.returnsAccepted ? "acceptés" : "refusés"} : ${x.message}`); }
+    const period = base.returnPeriod || { value: 30, unit: "DAY" }, payer = base.returnShippingCostPayer || "BUYER";
+    const { internationalOverride, returnMethod, ...clean } = base;
+    const fixes = [
+      ["remboursement en argent", { ...clean, refundMethod: "MONEY_BACK" }],
+      ["remboursement + retours É.-U. acceptés", { ...clean, refundMethod: "MONEY_BACK", internationalOverride: { returnsAccepted: true, returnPeriod: period, returnShippingCostPayer: payer } }],
+      ["remboursement + retours É.-U. refusés", { ...clean, refundMethod: "MONEY_BACK", internationalOverride: { returnsAccepted: false } }],
+    ];
+    for (const [label, body] of fixes) {
+      try { await ebay("retours", t, "PUT", path, { lang, body }); }
+      catch (x) { tries.push(`${label} (modification) : ${x.message}`); continue; }
+      try { return await doPublish(); }
+      catch (x) { tries.push(`${label} (publication) : ${x.message}`); }
     }
   }
   // 2) dernier recours : nouvelle règle « retours non acceptés »
