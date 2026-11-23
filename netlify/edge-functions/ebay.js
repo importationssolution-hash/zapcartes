@@ -331,8 +331,13 @@ async function createPolicies(req) {
     const base = { name: `300mph retours ${tag}`, marketplaceId: mkt, categoryTypes: cat, returnsAccepted: accept };
     if (!accept) return ebay("retours", t, "POST", "/sell/account/v1/return_policy", { lang, body: base });
     const full = { ...base, returnPeriod: { value: 30, unit: "DAY" }, returnShippingCostPayer: "BUYER" };
-    try { return await ebay("retours", t, "POST", "/sell/account/v1/return_policy", { lang, body: { ...full, refundMethod: "MONEY_BACK" } }); }
-    catch (e) { if (notEligible(e)) throw e; return ebay("retours", t, "POST", "/sell/account/v1/return_policy", { lang, body: full }); }
+    const io = { internationalOverride: { returnsAccepted: true, returnPeriod: full.returnPeriod, returnShippingCostPayer: "BUYER" } };
+    let last;
+    for (const body of [{ ...full, ...io, refundMethod: "MONEY_BACK" }, { ...full, ...io }, { ...full, refundMethod: "MONEY_BACK" }, full]) {
+      try { return await ebay("retours", t, "POST", "/sell/account/v1/return_policy", { lang, body }); }
+      catch (e) { if (notEligible(e)) throw e; last = e; }
+    }
+    throw last;
   });
   const created = {};
   const svc = (code, cost, extra = {}) => ({ sortOrder: 1, shippingServiceCode: code, freeShipping: cost === 0, shippingCost: { value: cost.toFixed(2), currency }, ...extra });
@@ -415,7 +420,7 @@ async function publish(req) {
   const aspects = buildAspects(meta, info, fr);
   const cond = CARD_CONDITION[Math.max(0, Math.min(5, parseInt(p.condition) || 1))];
 
-  await ebay("fiche", t, "PUT", `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+  const putItem = (k) => ebay("fiche", t, "PUT", `/sell/inventory/v1/inventory_item/${encodeURIComponent(k)}`, {
     lang,
     body: {
       availability: { shipToLocationAvailability: { quantity: qty } },
@@ -424,6 +429,7 @@ async function publish(req) {
       product: { title, description: desc.html, aspects, imageUrls: [imageUrl] },
     },
   });
+  await putItem(sku);
   const offer = {
     sku, marketplaceId: mkt, format: "FIXED_PRICE", availableQuantity: qty, categoryId,
     listingDescription: desc.html,
@@ -431,25 +437,68 @@ async function publish(req) {
     pricingSummary: { price: { value: price.toFixed(2), currency: MARKETS[mkt].currency } },
     merchantLocationKey: locationKey,
   };
+  const createOffer = async () => (await ebay("offre", t, "POST", "/sell/inventory/v1/offer", { lang, body: offer })).data.offerId;
   let offerId;
-  try {
-    offerId = (await ebay("offre", t, "POST", "/sell/inventory/v1/offer", { lang, body: offer })).data.offerId;
-  } catch (e) {
-    if (!(e.ids || []).includes(25002)) throw e; // l'offre existe déjà pour cette carte : on la met à jour
-    const list = (await ebay("offre", t, "GET", `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${mkt}`, { lang })).data?.offers || [];
-    if (!list[0]) throw e;
-    offerId = list[0].offerId;
-    await ebay("offre", t, "PUT", `/sell/inventory/v1/offer/${offerId}`, { lang, body: offer });
+  try { offerId = await createOffer(); }
+  catch (e) {
+    if (!(e.ids || []).some((x) => x === 25002 || x === 25713) && !/already exists|not available/i.test(e.message)) throw e;
+    // Une offre existe déjà pour cette carte (essai précédent) : on la met à jour,
+    // et si eBay la dit « indisponible », on la supprime et on en recrée une neuve.
+    let list = [];
+    try { list = (await ebay("offre", t, "GET", `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${mkt}`, { lang })).data?.offers || []; } catch {}
+    for (const o of list) {
+      if (offerId) break;
+      try { await ebay("offre", t, "PUT", `/sell/inventory/v1/offer/${o.offerId}`, { lang, body: offer }); offerId = o.offerId; }
+      catch { try { await ebay("offre", t, "DELETE", `/sell/inventory/v1/offer/${o.offerId}`, { lang }); } catch {} }
+    }
+    if (!offerId) { try { offerId = await createOffer(); } catch {} }
+    if (!offerId) {
+      // dernier recours : nouvelle fiche avec un identifiant neuf
+      offer.sku = `${sku.slice(0, 40)}-${Date.now().toString(36)}`;
+      await putItem(offer.sku);
+      offerId = await createOffer();
+    }
   }
-  const pub = await ebay("publication", t, "POST", `/sell/inventory/v1/offer/${offerId}/publish`, { lang, body: {} });
+  const doPublish = () => ebay("publication", t, "POST", `/sell/inventory/v1/offer/${offerId}/publish`, { lang, body: {} });
+  let pub, fixedReturnPolicy = null;
+  try { pub = await doPublish(); }
+  catch (e) {
+    if (!/return policy|politique de retour/i.test(e.message)) throw e;
+    // Règle de retours refusée : 300mph la répare toute seule puis réessaie.
+    const tries = [];
+    pub = await repairReturns(t, mkt, lang, policies.returns, offer, offerId, doPublish, (id) => { fixedReturnPolicy = id; }, tries).catch((x) => { tries.push("réparation : " + x.message); return null; });
+    if (!pub) throw new Fail("publication", `${e.message} ‖ Essais de réparation : ${tries.join(" ‖ ") || "aucun"}`);
+  }
   const listingId = pub.data?.listingId;
   const site = SANDBOX ? "https://sandbox.ebay.com" : (mkt === "EBAY_CA" && fr ? "https://www.cafr.ebay.ca" : MARKETS[mkt].site);
   return {
-    listingId, offerId, sku, categoryId,
+    listingId, offerId, sku: offer.sku, categoryId,
     url: listingId ? `${site}/itm/${listingId}` : null,
     description: desc.html, descriptionBy: desc.by,
     warnings: (pub.data?.warnings || []).map((w) => w.longMessage || w.message),
+    fixedReturnPolicy,
   };
+}
+async function repairReturns(t, mkt, lang, returnId, offer, offerId, doPublish, onNewPolicy, tries = []) {
+  const path = `/sell/account/v1/return_policy/${returnId}`;
+  const cur = (await ebay("retours", t, "GET", path, { lang })).data || {};
+  const { returnPolicyId, ...base } = cur;
+  // 1) mêmes retours pour les acheteurs des États-Unis (envoi international)
+  if (base.returnsAccepted) {
+    const intl = { returnsAccepted: true, returnPeriod: base.returnPeriod || { value: 30, unit: "DAY" }, returnShippingCostPayer: base.returnShippingCostPayer || "BUYER", returnMethod: "MONEY_BACK" };
+    for (const io of [intl, { returnsAccepted: true, returnPeriod: intl.returnPeriod, returnShippingCostPayer: intl.returnShippingCostPayer }, { returnsAccepted: false }]) {
+      try { await ebay("retours", t, "PUT", path, { lang, body: { ...base, internationalOverride: io } }); return await doPublish(); }
+      catch (x) { tries.push(`retours internationaux ${io.returnsAccepted ? "acceptés" : "refusés"} : ${x.message}`); }
+    }
+  }
+  // 2) dernier recours : nouvelle règle « retours non acceptés »
+  const name = `300mph sans retour ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+  const created = (await ebay("retours", t, "POST", "/sell/account/v1/return_policy", { lang, body: {
+    name, marketplaceId: mkt, categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }], returnsAccepted: false } })).data;
+  const newId = created?.returnPolicyId; if (!newId) return null;
+  await ebay("offre", t, "PUT", `/sell/inventory/v1/offer/${offerId}`, { lang, body: { ...offer, listingPolicies: { ...offer.listingPolicies, returnPolicyId: newId } } });
+  try { const pub = await doPublish(); onNewPolicy(newId); return pub; }
+  catch (x) { tries.push(`règle « sans retour » : ${x.message}`); return null; }
 }
 
 // ---------- notification eBay de suppression de compte ----------
